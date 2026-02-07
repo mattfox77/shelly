@@ -20,8 +20,10 @@ RUN npm install -g \
     tsx \
     jest \
     eslint \
-    @anthropic-ai/sdk \
-    @anthropic-ai/claude-code
+    @anthropic-ai/sdk
+
+# Install Claude CLI separately (large package, own layer for caching)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create workspace directory
 WORKDIR /workspaces/shelly

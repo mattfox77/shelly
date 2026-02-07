@@ -14,7 +14,7 @@ services:
     volumes:
       - ../..:/workspaces:z
       - ${HOME}/.claude:/root/.claude:z
-    command: sleep infinity
+    command: bash -c "cd /workspaces/machina && npm install && npm run build && cd /workspaces/shelly && npm install && npm run dev"
     security_opt:
       - label:disable
     environment:
