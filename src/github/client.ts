@@ -436,10 +436,13 @@ export class GitHubClient {
   // ==================== Repository Info ====================
 
   async getRepository(repo: string): Promise<{
+    name: string;
     full_name: string;
     description: string | null;
     default_branch: string;
     open_issues_count: number;
+    stargazers_count: number;
+    forks_count: number;
     language: string | null;
     topics: string[];
   }> {
@@ -454,10 +457,13 @@ export class GitHubClient {
     );
 
     return {
+      name: result.data.name,
       full_name: result.data.full_name,
       description: result.data.description,
       default_branch: result.data.default_branch,
       open_issues_count: result.data.open_issues_count,
+      stargazers_count: result.data.stargazers_count,
+      forks_count: result.data.forks_count,
       language: result.data.language,
       topics: result.data.topics || []
     };

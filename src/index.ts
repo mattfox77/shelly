@@ -7,16 +7,15 @@
 import 'dotenv/config';
 import * as path from 'path';
 import { loggers, BaseHealthServer } from 'the-machina';
-import { Agent, tools, createToolHandlers } from './agent';
+import { ClaudeCLIAgent } from './agent';
 import { GitHubClient } from './github';
 import { ShellyDataStore } from './data/store';
+import { NotificationService } from './channels/notifications';
+import { SandboxService } from './sandbox';
+import { createApiRouter } from './api';
 
 // Configuration
 const config = {
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY || '',
-    model: process.env.MODEL || 'claude-sonnet-4-20250514'
-  },
   github: {
     token: process.env.GITHUB_TOKEN || ''
   },
@@ -32,6 +31,12 @@ const config = {
   },
   server: {
     port: parseInt(process.env.PORT || '8081')
+  },
+  sandbox: {
+    url: process.env.SANDBOX_AGENT_URL || 'http://localhost:2468'
+  },
+  workspace: {
+    path: path.join(__dirname, '..', 'workspace')
   }
 };
 
@@ -39,7 +44,6 @@ const config = {
 function validateConfig(): void {
   const missing: string[] = [];
 
-  if (!config.anthropic.apiKey) missing.push('ANTHROPIC_API_KEY');
   if (!config.github.token) missing.push('GITHUB_TOKEN');
 
   if (missing.length > 0) {
@@ -68,20 +72,39 @@ async function main(): Promise<void> {
   });
   loggers.app.info('GitHub client initialized');
 
-  // Initialize agent
-  const agent = new Agent();
-  await agent.init({
-    model: config.anthropic.model,
-    apiKey: config.anthropic.apiKey,
-    workspacePath: path.join(__dirname, '..', 'workspace')
-  });
-  loggers.app.info('Agent initialized');
+  // Check Claude CLI availability (for chat)
+  const cliAgent = new ClaudeCLIAgent({ workspacePath: config.workspace.path });
+  const cliAvailable = await cliAgent.isAvailable();
+  loggers.app.info('Claude CLI status', { available: cliAvailable });
+  if (!cliAvailable) {
+    loggers.app.warn('Claude CLI not available - install with: npm install -g @anthropic-ai/claude-code');
+  }
 
-  // Create tool handlers
-  const toolHandlers = createToolHandlers(github, dataStore);
+  // Initialize notification service
+  const notificationService = new NotificationService();
+  loggers.app.info('Notification service initialized');
+
+  // Initialize sandbox service
+  const sandboxService = new SandboxService({ baseUrl: config.sandbox.url });
+  const sandboxAvailable = await sandboxService.isAvailable();
+  loggers.app.info('Sandbox service initialized', { available: sandboxAvailable });
+
+  // Create API router
+  const apiRouter = createApiRouter({
+    dataStore,
+    github,
+    workspacePath: config.workspace.path,
+    notificationService,
+    sandboxService
+  });
 
   // Start health check server
   const healthServer = new ShellyHealthServer({ dataStore });
+
+  // Mount API routes
+  healthServer.use('/api', apiRouter);
+  loggers.app.info('API routes mounted');
+
   await healthServer.start(config.server.port);
   loggers.app.info('Health server started', { port: config.server.port });
 
@@ -185,3 +208,6 @@ main().catch(error => {
 
 // Export for testing
 export { Agent, GitHubClient, ShellyDataStore, tools, createToolHandlers };
+export { createApiRouter } from './api';
+export { SandboxService } from './sandbox';
+export { NotificationService } from './channels/notifications';

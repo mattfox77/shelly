@@ -1,0 +1,89 @@
+# Podman-compatible compose file for Shelly development environment
+# Use with: podman-compose up -d
+# Or: podman compose up -d (with podman-compose plugin)
+#
+# All services use host network mode for direct host network access
+
+services:
+  app:
+    container_name: shelly-app
+    build:
+      context: .
+      dockerfile: Containerfile
+    network_mode: host
+    volumes:
+      - ../..:/workspaces:z
+      - ${HOME}/.claude:/root/.claude:z
+    command: sleep infinity
+    security_opt:
+      - label:disable
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=localhost
+      - DB_PORT=5432
+      - DB_NAME=shelly
+      - DB_USER=shelly
+      - DB_PASSWORD=shelly_dev_password
+      - REDIS_URL=redis://localhost:6379
+      - SANDBOX_AGENT_URL=http://localhost:2468
+      - PORT=8081
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  db:
+    container_name: shelly-db
+    image: docker.io/library/postgres:16-alpine
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:z
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:z
+    environment:
+      POSTGRES_USER: shelly
+      POSTGRES_PASSWORD: shelly_dev_password
+      POSTGRES_DB: shelly
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shelly -d shelly"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    container_name: shelly-redis
+    image: docker.io/library/redis:7-alpine
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    volumes:
+      - redis-data:/data:z
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  sandbox-agent:
+    container_name: shelly-sandbox-agent
+    image: ghcr.io/rivet-dev/sandbox-agent:latest
+    network_mode: host
+    command: server --no-token --host 0.0.0.0 --port 2468
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    volumes:
+      - sandbox-workspaces:/workspaces:z
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    profiles:
+      - sandbox
+
+volumes:
+  postgres-data:
+  redis-data:
+  sandbox-workspaces:
