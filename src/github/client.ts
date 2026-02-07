@@ -485,4 +485,101 @@ export class GitHubClient {
 
     return result.data;
   }
+
+  // ==================== Labels ====================
+
+  async listLabels(repo: string): Promise<Array<{
+    name: string;
+    color: string;
+    description: string | null;
+  }>> {
+    const { owner, repo: repoName } = this.parseRepo(repo);
+
+    const result = await withRetry(
+      () => this.octokit.issues.listLabelsForRepo({
+        owner,
+        repo: repoName,
+        per_page: 100
+      }),
+      this.retryConfig
+    );
+
+    return result.data.map(l => ({
+      name: l.name,
+      color: l.color,
+      description: l.description
+    }));
+  }
+
+  // ==================== File Contents ====================
+
+  async getFileContents(repo: string, path: string, ref?: string): Promise<{
+    name: string;
+    path: string;
+    content: string;
+    sha: string;
+    size: number;
+  }> {
+    const { owner, repo: repoName } = this.parseRepo(repo);
+
+    const result = await withRetry(
+      () => this.octokit.repos.getContent({
+        owner,
+        repo: repoName,
+        path,
+        ref
+      }),
+      this.retryConfig
+    );
+
+    const data = result.data as {
+      name: string;
+      path: string;
+      content?: string;
+      sha: string;
+      size: number;
+      encoding?: string;
+    };
+
+    if (!data.content) {
+      throw new Error(`${path} is a directory, not a file`);
+    }
+
+    // Decode base64 content
+    const content = data.encoding === 'base64'
+      ? Buffer.from(data.content, 'base64').toString('utf-8')
+      : data.content;
+
+    return {
+      name: data.name,
+      path: data.path,
+      content,
+      sha: data.sha,
+      size: data.size
+    };
+  }
+
+  // ==================== Commit Activity ====================
+
+  async getCommitActivity(repo: string): Promise<Array<{
+    week: number;
+    total: number;
+    days: number[];
+  }>> {
+    const { owner, repo: repoName } = this.parseRepo(repo);
+
+    const result = await withRetry(
+      () => this.octokit.repos.getCommitActivityStats({
+        owner,
+        repo: repoName
+      }),
+      this.retryConfig
+    );
+
+    if (!result.data || !Array.isArray(result.data)) {
+      return [];
+    }
+
+    return result.data;
+  }
 }

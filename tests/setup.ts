@@ -64,6 +64,7 @@ const mockOctokit = {
     update: jest.fn(),
     createComment: jest.fn(),
     addLabels: jest.fn(),
+    listLabelsForRepo: jest.fn().mockResolvedValue({ data: [] }),
     listMilestones: jest.fn().mockResolvedValue({ data: [] }),
     getMilestone: jest.fn()
   },
@@ -77,7 +78,9 @@ const mockOctokit = {
   repos: {
     get: jest.fn(),
     listCommits: jest.fn().mockResolvedValue({ data: [] }),
-    getContributorsStats: jest.fn().mockResolvedValue({ data: [] })
+    getContributorsStats: jest.fn().mockResolvedValue({ data: [] }),
+    getContent: jest.fn(),
+    getCommitActivityStats: jest.fn().mockResolvedValue({ data: [] })
   },
   search: {
     issuesAndPullRequests: jest.fn().mockResolvedValue({ data: { items: [] } }),
