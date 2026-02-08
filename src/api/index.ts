@@ -14,6 +14,8 @@ import { createDashboardRouter } from './routes/dashboard';
 import { createChatRouter } from './routes/chat';
 import { createAdminRouter } from './routes/admin';
 import { createSandboxRouter } from './routes/sandbox';
+import { createWorkflowRouter } from './routes/workflows';
+import { TemporalClient } from '../temporal/client';
 
 export interface ApiDependencies {
   dataStore: ShellyDataStore;
@@ -21,6 +23,7 @@ export interface ApiDependencies {
   workspacePath: string;
   notificationService: NotificationService;
   sandboxService: SandboxService;
+  temporalClient?: TemporalClient;
 }
 
 /**
@@ -40,6 +43,11 @@ export function createApiRouter(deps: ApiDependencies): Router {
 
   // Mount sandbox routes
   router.use('/sandbox', createSandboxRouter(deps.dataStore, deps.sandboxService));
+
+  // Mount workflow routes (only if Temporal is available)
+  if (deps.temporalClient) {
+    router.use('/workflows', createWorkflowRouter(deps.temporalClient, deps.dataStore));
+  }
 
   // API info endpoint
   router.get('/', (req, res) => {
@@ -82,6 +90,21 @@ export function createApiRouter(deps: ApiDependencies): Router {
           'POST /api/sandbox/sessions/:id/questions': 'Answer agent question',
           'GET /api/sandbox/sessions/:id/events/stream': 'SSE event stream',
           'DELETE /api/sandbox/sessions/:id': 'Terminate session'
+        },
+        workflows: {
+          'GET /api/workflows': 'List recent workflow executions',
+          'GET /api/workflows/:workflowId': 'Get workflow status',
+          'GET /api/workflows/:workflowId/result': 'Get workflow result',
+          'POST /api/workflows/trigger/daily-report': 'Trigger daily report workflow',
+          'POST /api/workflows/trigger/weekly-report': 'Trigger weekly report workflow',
+          'POST /api/workflows/trigger/stale-detection': 'Trigger stale detection workflow',
+          'POST /api/workflows/trigger/notification': 'Trigger notification workflow',
+          'POST /api/workflows/schedules/daily-report': 'Create/update daily report schedule',
+          'POST /api/workflows/schedules/weekly-report': 'Create/update weekly report schedule',
+          'POST /api/workflows/schedules/stale-detection': 'Create/update stale detection schedule',
+          'GET /api/workflows/schedules': 'List all schedules',
+          'DELETE /api/workflows/schedules/:scheduleId': 'Delete a schedule',
+          'POST /api/workflows/:workflowId/cancel': 'Cancel running workflow'
         }
       }
     });
@@ -95,3 +118,4 @@ export { createDashboardRouter } from './routes/dashboard';
 export { createChatRouter } from './routes/chat';
 export { createAdminRouter } from './routes/admin';
 export { createSandboxRouter } from './routes/sandbox';
+export { createWorkflowRouter } from './routes/workflows';

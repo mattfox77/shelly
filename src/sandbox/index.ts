@@ -78,7 +78,7 @@ export class SandboxService {
         throw new Error(`Failed to create session: ${error}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { session_id: string };
       const session: SandboxSession = {
         id: data.session_id,
         agent,
@@ -112,7 +112,7 @@ export class SandboxService {
         throw new Error(`Failed to get session status: ${response.statusText}`);
       }
 
-      return await response.json();
+      return await response.json() as Record<string, unknown>;
     } catch (error) {
       loggers.app.error('Failed to get session status', { error, sessionId });
       throw error;
@@ -139,7 +139,7 @@ export class SandboxService {
         throw new Error(`Failed to send message: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { message_id: string };
       loggers.app.info('Sent message to session', { sessionId, messageId: data.message_id });
 
       return { messageId: data.message_id };
@@ -302,7 +302,7 @@ export class SandboxService {
         throw new Error(`Failed to list agents: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { agents?: AgentInfo[] };
       return data.agents || [];
     } catch (error) {
       loggers.app.error('Failed to list agents', { error });

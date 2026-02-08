@@ -46,7 +46,7 @@
     }
   },
 
-  "forwardPorts": [8081, 5432, 6379, 3000, 2468],
+  "forwardPorts": [8081, 5432, 5433, 6379, 3000, 2468, 7233, 8233],
   "portsAttributes": {
     "8081": {
       "label": "Shelly API",
@@ -67,6 +67,18 @@
     "2468": {
       "label": "Sandbox Agent",
       "onAutoForward": "silent"
+    },
+    "5433": {
+      "label": "Temporal PostgreSQL",
+      "onAutoForward": "silent"
+    },
+    "7233": {
+      "label": "Temporal gRPC",
+      "onAutoForward": "silent"
+    },
+    "8233": {
+      "label": "Temporal UI",
+      "onAutoForward": "notify"
     }
   },
 
@@ -88,7 +100,8 @@
     "DB_PASSWORD": "shelly_dev_password",
     "REDIS_URL": "redis://localhost:6379",
     "PORT": "8081",
-    "SANDBOX_AGENT_URL": "http://localhost:2468"
+    "SANDBOX_AGENT_URL": "http://localhost:2468",
+    "TEMPORAL_ADDRESS": "localhost:7233"
   },
 
   "mounts": [

@@ -7,12 +7,15 @@
 import 'dotenv/config';
 import * as path from 'path';
 import { loggers, BaseHealthServer } from 'the-machina';
-import { ClaudeCLIAgent } from './agent';
+import { ClaudeCLIAgent, Agent, tools, createToolHandlers } from './agent';
 import { GitHubClient } from './github';
 import { ShellyDataStore } from './data/store';
 import { NotificationService } from './channels/notifications';
 import { SandboxService } from './sandbox';
+import { ReportingService } from './skills/reporting';
 import { createApiRouter } from './api';
+import { TemporalClient, startWorker } from './temporal';
+import type { Worker } from '@temporalio/worker';
 
 // Configuration
 const config = {
@@ -34,6 +37,9 @@ const config = {
   },
   sandbox: {
     url: process.env.SANDBOX_AGENT_URL || 'http://localhost:2468'
+  },
+  temporal: {
+    address: process.env.TEMPORAL_ADDRESS || 'localhost:7233'
   },
   workspace: {
     path: path.join(__dirname, '..', 'workspace')
@@ -89,17 +95,40 @@ async function main(): Promise<void> {
   const sandboxAvailable = await sandboxService.isAvailable();
   loggers.app.info('Sandbox service initialized', { available: sandboxAvailable });
 
+  // Initialize Temporal (optional — graceful fallback if unavailable)
+  let temporalClient: TemporalClient | undefined;
+  let temporalWorker: Worker | undefined;
+  try {
+    temporalClient = new TemporalClient(config.temporal.address);
+    await temporalClient.connect();
+    loggers.app.info('Temporal client connected');
+
+    const reportingService = new ReportingService({ github, dataStore });
+    temporalWorker = await startWorker(
+      { reportingService, dataStore, github, notificationService },
+      { address: config.temporal.address }
+    );
+    loggers.app.info('Temporal worker started');
+  } catch (error) {
+    loggers.app.warn('Temporal unavailable — running without workflow support', {
+      error: (error as Error).message,
+    });
+    temporalClient = undefined;
+    temporalWorker = undefined;
+  }
+
   // Create API router
   const apiRouter = createApiRouter({
     dataStore,
     github,
     workspacePath: config.workspace.path,
     notificationService,
-    sandboxService
+    sandboxService,
+    temporalClient,
   });
 
   // Start health check server
-  const healthServer = new ShellyHealthServer({ dataStore });
+  const healthServer = new ShellyHealthServer({ dataStore, temporalClient });
 
   // Mount API routes
   healthServer.use('/api', apiRouter);
@@ -108,48 +137,35 @@ async function main(): Promise<void> {
   await healthServer.start(config.server.port);
   loggers.app.info('Health server started', { port: config.server.port });
 
-  // Example: Process a test message (remove in production)
   if (process.env.NODE_ENV === 'development') {
     loggers.app.info('Running in development mode');
-
-    // Test the agent with a simple query
-    const testRepo = process.env.TEST_REPO;
-    if (testRepo) {
-      loggers.app.info('Testing with repository', { repo: testRepo });
-      const response = await agent.process(
-        `Give me a quick status of the ${testRepo} repository - how many open issues and PRs are there?`,
-        tools,
-        toolHandlers
-      );
-
-      const textContent = response.content.find(c => c.type === 'text');
-      if (textContent && 'text' in textContent) {
-        loggers.app.info('Agent response', { text: textContent.text });
-      }
-    }
   }
 
   // Handle graceful shutdown
-  process.on('SIGINT', async () => {
+  const shutdown = async () => {
     loggers.app.info('Shutting down...');
+    if (temporalWorker) {
+      temporalWorker.shutdown();
+      loggers.app.info('Temporal worker stopped');
+    }
+    if (temporalClient) {
+      await temporalClient.close();
+    }
     await healthServer.stop();
     await dataStore.close();
     process.exit(0);
-  });
+  };
 
-  process.on('SIGTERM', async () => {
-    loggers.app.info('Shutting down...');
-    await healthServer.stop();
-    await dataStore.close();
-    process.exit(0);
-  });
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 // Health server extending BaseHealthServer
 class ShellyHealthServer extends BaseHealthServer {
   private dataStore: ShellyDataStore;
+  private temporalClient?: TemporalClient;
 
-  constructor(deps: { dataStore: ShellyDataStore }) {
+  constructor(deps: { dataStore: ShellyDataStore; temporalClient?: TemporalClient }) {
     super({
       port: 8081,
       enableMetrics: true,
@@ -157,6 +173,7 @@ class ShellyHealthServer extends BaseHealthServer {
       version: '1.0.0'
     });
     this.dataStore = deps.dataStore;
+    this.temporalClient = deps.temporalClient;
   }
 
   protected async checkDependencies(): Promise<Record<string, { name: string; status: 'up' | 'down'; message?: string; responseTime?: number }>> {
@@ -196,6 +213,26 @@ class ShellyHealthServer extends BaseHealthServer {
       };
     }
 
+    // Check Temporal
+    if (this.temporalClient) {
+      try {
+        const start = Date.now();
+        const healthy = await this.temporalClient.isHealthy();
+        checks.temporal = {
+          name: 'temporal',
+          status: healthy ? 'up' : 'down',
+          responseTime: Date.now() - start,
+          message: healthy ? undefined : 'Health check failed'
+        };
+      } catch (error) {
+        checks.temporal = {
+          name: 'temporal',
+          status: 'down',
+          message: (error as Error).message
+        };
+      }
+    }
+
     return checks;
   }
 }
@@ -211,3 +248,4 @@ export { Agent, GitHubClient, ShellyDataStore, tools, createToolHandlers };
 export { createApiRouter } from './api';
 export { SandboxService } from './sandbox';
 export { NotificationService } from './channels/notifications';
+export { TemporalClient } from './temporal';

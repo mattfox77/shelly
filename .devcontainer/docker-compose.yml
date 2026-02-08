@@ -27,11 +27,14 @@ services:
       - REDIS_URL=redis://localhost:6379
       - SANDBOX_AGENT_URL=http://localhost:2468
       - PORT=8081
+      - TEMPORAL_ADDRESS=localhost:7233
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      temporal:
+        condition: service_started
 
   db:
     container_name: shelly-db
@@ -68,6 +71,58 @@ services:
       timeout: 5s
       retries: 5
 
+  temporal-db:
+    container_name: shelly-temporal-db
+    image: docker.io/library/postgres:16-alpine
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data:z
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal_dev_password
+      POSTGRES_DB: temporal
+      PGPORT: "5433"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal -p 5433"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    container_name: shelly-temporal
+    image: docker.io/temporalio/auto-setup:latest
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    environment:
+      - DB=postgres12
+      - DB_PORT=5433
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal_dev_password
+      - POSTGRES_SEEDS=localhost
+      - TEMPORAL_ADDRESS=localhost:7233
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+
+  temporal-ui:
+    container_name: shelly-temporal-ui
+    image: docker.io/temporalio/ui:latest
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    environment:
+      - TEMPORAL_ADDRESS=localhost:7233
+      - TEMPORAL_UI_PORT=8233
+    depends_on:
+      temporal:
+        condition: service_started
+
   sandbox-agent:
     container_name: shelly-sandbox-agent
     image: ghcr.io/rivet-dev/sandbox-agent:latest
@@ -86,4 +141,5 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  temporal-postgres-data:
   sandbox-workspaces:
