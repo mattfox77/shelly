@@ -46,17 +46,17 @@
     }
   },
 
-  "forwardPorts": [8081, 5432, 5433, 6379, 3000, 2468, 7233, 8233],
+  "forwardPorts": [8081, 5434, 5435, 6381, 3000, 2468, 7233, 8233],
   "portsAttributes": {
     "8081": {
       "label": "Shelly API",
       "onAutoForward": "notify"
     },
-    "5432": {
+    "5434": {
       "label": "PostgreSQL",
       "onAutoForward": "silent"
     },
-    "6379": {
+    "6381": {
       "label": "Redis",
       "onAutoForward": "silent"
     },
@@ -68,7 +68,7 @@
       "label": "Sandbox Agent",
       "onAutoForward": "silent"
     },
-    "5433": {
+    "5435": {
       "label": "Temporal PostgreSQL",
       "onAutoForward": "silent"
     },
@@ -94,11 +94,11 @@
   "remoteEnv": {
     "NODE_ENV": "development",
     "DB_HOST": "localhost",
-    "DB_PORT": "5432",
+    "DB_PORT": "5434",
     "DB_NAME": "shelly",
     "DB_USER": "shelly",
     "DB_PASSWORD": "shelly_dev_password",
-    "REDIS_URL": "redis://localhost:6379",
+    "REDIS_URL": "redis://localhost:6381",
     "PORT": "8081",
     "SANDBOX_AGENT_URL": "http://localhost:2468",
     "TEMPORAL_ADDRESS": "localhost:7233"

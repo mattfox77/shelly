@@ -20,11 +20,11 @@ services:
     environment:
       - NODE_ENV=development
       - DB_HOST=localhost
-      - DB_PORT=5432
+      - DB_PORT=5434
       - DB_NAME=shelly
       - DB_USER=shelly
       - DB_PASSWORD=shelly_dev_password
-      - REDIS_URL=redis://localhost:6379
+      - REDIS_URL=redis://localhost:6381
       - SANDBOX_AGENT_URL=http://localhost:2468
       - PORT=8081
       - TEMPORAL_ADDRESS=localhost:7233
@@ -50,8 +50,9 @@ services:
       POSTGRES_USER: shelly
       POSTGRES_PASSWORD: shelly_dev_password
       POSTGRES_DB: shelly
+      PGPORT: "5434"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shelly -d shelly"]
+      test: ["CMD-SHELL", "pg_isready -U shelly -d shelly -p 5434"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -63,10 +64,11 @@ services:
     restart: unless-stopped
     security_opt:
       - label:disable
+    command: redis-server --port 6381
     volumes:
       - redis-data:/data:z
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "6381", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -84,9 +86,9 @@ services:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal_dev_password
       POSTGRES_DB: temporal
-      PGPORT: "5433"
+      PGPORT: "5435"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal -p 5433"]
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal -p 5435"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -100,11 +102,12 @@ services:
       - label:disable
     environment:
       - DB=postgres12
-      - DB_PORT=5433
+      - DB_PORT=5435
       - POSTGRES_USER=temporal
       - POSTGRES_PWD=temporal_dev_password
       - POSTGRES_SEEDS=localhost
       - TEMPORAL_ADDRESS=localhost:7233
+      - BIND_ON_IP=0.0.0.0
     depends_on:
       temporal-db:
         condition: service_healthy
