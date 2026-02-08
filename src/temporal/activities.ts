@@ -18,6 +18,31 @@ export interface ActivityDependencies {
   notificationService: NotificationService;
 }
 
+export interface RepoStats {
+  repository: {
+    name: string;
+    full_name: string;
+    description: string | null;
+    stars: number;
+    forks: number;
+    default_branch: string;
+  };
+  issues: {
+    open: number;
+    labels: Record<string, number>;
+  };
+  pullRequests: {
+    open: number;
+    reviewPending: number;
+    withReviewers: number;
+  };
+  today: {
+    commits: number;
+    contributors: number;
+  };
+  lastUpdated: string;
+}
+
 export interface StaleItem {
   type: 'issue' | 'pr';
   number: number;
@@ -113,6 +138,55 @@ export function createActivities(deps: ActivityDependencies) {
         body,
         priority,
       });
+    },
+
+    async fetchRepoStats(repo: string): Promise<RepoStats> {
+      loggers.app.info('Activity: fetching repo stats', { repo });
+
+      const [issues, prs, repoInfo] = await Promise.all([
+        github.listIssues(repo, { state: 'open' }),
+        github.listPullRequests(repo, { state: 'open' }),
+        github.getRepository(repo),
+      ]);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const commits = await github.listCommits(repo, {
+        since: today.toISOString(),
+      });
+
+      // Group issues by label
+      const labelCounts: Record<string, number> = {};
+      for (const issue of issues) {
+        for (const label of issue.labels || []) {
+          labelCounts[label.name] = (labelCounts[label.name] || 0) + 1;
+        }
+      }
+
+      return {
+        repository: {
+          name: repoInfo.name,
+          full_name: repoInfo.full_name,
+          description: repoInfo.description,
+          stars: repoInfo.stargazers_count,
+          forks: repoInfo.forks_count,
+          default_branch: repoInfo.default_branch,
+        },
+        issues: {
+          open: issues.length,
+          labels: labelCounts,
+        },
+        pullRequests: {
+          open: prs.length,
+          reviewPending: prs.filter(pr => !pr.requested_reviewers?.length).length,
+          withReviewers: prs.filter(pr => pr.requested_reviewers?.length).length,
+        },
+        today: {
+          commits: commits.length,
+          contributors: [...new Set(commits.map(c => c.author?.login).filter(Boolean))].length,
+        },
+        lastUpdated: new Date().toISOString(),
+      };
     },
 
     async logWorkflowActivity(

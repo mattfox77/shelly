@@ -35,6 +35,10 @@ export interface StaleDetectionInput {
   notifyRecipient?: string;
 }
 
+export interface RepoStatsInput {
+  repo: string;
+}
+
 export interface NotificationInput {
   channel: string;
   recipient: string;
@@ -210,4 +214,11 @@ export async function notificationDeliveryWorkflow(input: NotificationInput): Pr
     messageId: result.messageId,
     error: result.error,
   };
+}
+
+/**
+ * Fetch repository stats with retry/timeout/observability.
+ */
+export async function repoStatsWorkflow(input: RepoStatsInput): Promise<ReturnType<Activities['fetchRepoStats']>> {
+  return activities.fetchRepoStats(input.repo);
 }

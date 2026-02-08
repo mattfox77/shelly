@@ -10,7 +10,9 @@ import { GitHubClient } from '../github/client';
 import { ShellyDataStore } from '../data/store';
 import { ReportingService } from '../skills/reporting';
 import { NotificationService } from '../channels/notifications';
+import { TemporalClient } from '../temporal/client';
 import { formatDate, parseDate } from '../utils/dates';
+import { v4 as uuid } from 'uuid';
 
 export const tools: Tool[] = [
   // ==================== Issue Management ====================
@@ -597,6 +599,7 @@ export interface ToolHandlerDependencies {
   dataStore: ShellyDataStore;
   reporting?: ReportingService;
   notifications?: NotificationService;
+  temporalClient?: TemporalClient;
 }
 
 /**
@@ -605,10 +608,11 @@ export interface ToolHandlerDependencies {
 export function createToolHandlers(
   github: GitHubClient,
   dataStore: ShellyDataStore,
-  deps?: { reporting?: ReportingService; notifications?: NotificationService }
+  deps?: { reporting?: ReportingService; notifications?: NotificationService; temporalClient?: TemporalClient }
 ): Record<string, (input: unknown) => Promise<unknown>> {
   const reporting = deps?.reporting || new ReportingService({ github, dataStore });
   const notifications = deps?.notifications || new NotificationService();
+  const temporalClient = deps?.temporalClient;
 
   // Configure GitHub comment channel
   const githubCommentChannel = notifications.getChannel('github_comment');
@@ -912,6 +916,19 @@ export function createToolHandlers(
     // ==================== Reporting ====================
     generate_daily_report: async (input: unknown) => {
       const { repo, date } = input as { repo: string; date?: string };
+
+      if (temporalClient) {
+        const client = temporalClient.getClient();
+        const workflowId = `daily-report-tool-${uuid()}`;
+        const handle = await client.workflow.start('dailyReportWorkflow', {
+          taskQueue: temporalClient.getTaskQueue(),
+          workflowId,
+          args: [{ repos: [repo], date }],
+        });
+        const result = await handle.result();
+        return result;
+      }
+
       const reportDate = parseDate(date);
       const report = await reporting.generateDailyReport(repo, reportDate);
 
@@ -935,6 +952,19 @@ export function createToolHandlers(
 
     generate_weekly_report: async (input: unknown) => {
       const { repo, week_start } = input as { repo: string; week_start?: string };
+
+      if (temporalClient) {
+        const client = temporalClient.getClient();
+        const workflowId = `weekly-report-tool-${uuid()}`;
+        const handle = await client.workflow.start('weeklyReportWorkflow', {
+          taskQueue: temporalClient.getTaskQueue(),
+          workflowId,
+          args: [{ repos: [repo], weekStart: week_start }],
+        });
+        const result = await handle.result();
+        return result;
+      }
+
       const startDate = week_start ? parseDate(week_start) : undefined;
       const report = await reporting.generateWeeklyReport(repo, startDate);
 
@@ -971,6 +1001,24 @@ export function createToolHandlers(
         body: string;
         priority?: 'low' | 'normal' | 'high';
       };
+
+      if (temporalClient) {
+        const client = temporalClient.getClient();
+        const workflowId = `notification-tool-${uuid()}`;
+        const handle = await client.workflow.start('notificationDeliveryWorkflow', {
+          taskQueue: temporalClient.getTaskQueue(),
+          workflowId,
+          args: [{ channel, recipient, subject: subject || '', body, priority: priority ?? 'normal' }],
+        });
+        const result = await handle.result();
+        return {
+          success: result.success,
+          channel: result.channel,
+          recipient: result.recipient,
+          message_id: result.messageId,
+          error: result.error,
+        };
+      }
 
       const result = await notifications.send(channel, recipient, {
         subject: subject || '',

@@ -150,7 +150,8 @@ CREATE INDEX idx_activity_log_project ON activity_log(project_id);
 CREATE INDEX idx_activity_log_action ON activity_log(action_type);
 CREATE INDEX idx_activity_log_created ON activity_log(created_at);
 
--- Scheduled tasks
+-- DEPRECATED: Replaced by Temporal Schedules (see src/temporal/).
+-- Kept for backward compatibility. Do not add new references.
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
     id SERIAL PRIMARY KEY,
     project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,

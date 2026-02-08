@@ -7,11 +7,14 @@
 import { Router, Request, Response } from 'express';
 import { ShellyDataStore } from '../../data/store';
 import { GitHubClient } from '../../github';
+import { TemporalClient } from '../../temporal/client';
 import { loggers } from 'the-machina';
+import { v4 as uuid } from 'uuid';
 
 export function createDashboardRouter(
   dataStore: ShellyDataStore,
-  github: GitHubClient
+  github: GitHubClient,
+  temporalClient?: TemporalClient
 ): Router {
   const router = Router();
 
@@ -29,46 +32,58 @@ export function createDashboardRouter(
         return res.status(404).json({ error: 'Project not found' });
       }
 
-      // Fetch live stats from GitHub
-      const [issues, prs, repoInfo] = await Promise.all([
-        github.listIssues(repo, { state: 'open' }),
-        github.listPullRequests(repo, { state: 'open' }),
-        github.getRepository(repo)
-      ]);
+      // Use Temporal workflow if available, otherwise direct GitHub calls
+      if (temporalClient) {
+        const client = temporalClient.getClient();
+        const workflowId = `repo-stats-${repo.replace('/', '-')}-${uuid()}`;
+        const handle = await client.workflow.start('repoStatsWorkflow', {
+          taskQueue: temporalClient.getTaskQueue(),
+          workflowId,
+          args: [{ repo }],
+        });
+        const stats = await handle.result();
+        res.json(stats);
+      } else {
+        // Fallback: direct GitHub calls
+        const [issues, prs, repoInfo] = await Promise.all([
+          github.listIssues(repo, { state: 'open' }),
+          github.listPullRequests(repo, { state: 'open' }),
+          github.getRepository(repo)
+        ]);
 
-      // Get today's commits
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const commits = await github.listCommits(repo, {
-        since: today.toISOString()
-      });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const commits = await github.listCommits(repo, {
+          since: today.toISOString()
+        });
 
-      const stats = {
-        repository: {
-          name: repoInfo.name,
-          full_name: repoInfo.full_name,
-          description: repoInfo.description,
-          stars: repoInfo.stargazers_count,
-          forks: repoInfo.forks_count,
-          default_branch: repoInfo.default_branch
-        },
-        issues: {
-          open: issues.length,
-          labels: groupByLabel(issues)
-        },
-        pullRequests: {
-          open: prs.length,
-          reviewPending: prs.filter(pr => !pr.requested_reviewers?.length).length,
-          withReviewers: prs.filter(pr => pr.requested_reviewers?.length).length
-        },
-        today: {
-          commits: commits.length,
-          contributors: [...new Set(commits.map(c => c.author?.login).filter(Boolean))].length
-        },
-        lastUpdated: new Date().toISOString()
-      };
+        const stats = {
+          repository: {
+            name: repoInfo.name,
+            full_name: repoInfo.full_name,
+            description: repoInfo.description,
+            stars: repoInfo.stargazers_count,
+            forks: repoInfo.forks_count,
+            default_branch: repoInfo.default_branch
+          },
+          issues: {
+            open: issues.length,
+            labels: groupByLabel(issues)
+          },
+          pullRequests: {
+            open: prs.length,
+            reviewPending: prs.filter(pr => !pr.requested_reviewers?.length).length,
+            withReviewers: prs.filter(pr => pr.requested_reviewers?.length).length
+          },
+          today: {
+            commits: commits.length,
+            contributors: [...new Set(commits.map(c => c.author?.login).filter(Boolean))].length
+          },
+          lastUpdated: new Date().toISOString()
+        };
 
-      res.json(stats);
+        res.json(stats);
+      }
     } catch (error) {
       loggers.app.error('Failed to get project stats', { error });
       res.status(500).json({ error: 'Failed to get project stats' });

@@ -7,11 +7,14 @@
 import { Router, Request, Response } from 'express';
 import { ShellyDataStore } from '../../data/store';
 import { NotificationService, EmailChannel, SlackChannel } from '../../channels/notifications';
+import { TemporalClient } from '../../temporal/client';
 import { loggers } from 'the-machina';
+import { v4 as uuid } from 'uuid';
 
 export function createAdminRouter(
   dataStore: ShellyDataStore,
-  notificationService: NotificationService
+  notificationService: NotificationService,
+  temporalClient?: TemporalClient
 ): Router {
   const router = Router();
 
@@ -107,13 +110,30 @@ export function createAdminRouter(
         return res.status(400).json({ error: 'Channel and recipient required' });
       }
 
-      const result = await notificationService.send(channel, recipient, {
-        subject: 'Shelly Test Notification',
-        body: 'This is a test notification from Shelly. If you received this, your notification channel is configured correctly!',
-        priority: 'normal'
-      });
-
-      res.json({ result });
+      if (temporalClient) {
+        const client = temporalClient.getClient();
+        const workflowId = `notification-test-${uuid()}`;
+        const handle = await client.workflow.start('notificationDeliveryWorkflow', {
+          taskQueue: temporalClient.getTaskQueue(),
+          workflowId,
+          args: [{
+            channel,
+            recipient,
+            subject: 'Shelly Test Notification',
+            body: 'This is a test notification from Shelly. If you received this, your notification channel is configured correctly!',
+            priority: 'normal',
+          }],
+        });
+        const result = await handle.result();
+        res.json({ result });
+      } else {
+        const result = await notificationService.send(channel, recipient, {
+          subject: 'Shelly Test Notification',
+          body: 'This is a test notification from Shelly. If you received this, your notification channel is configured correctly!',
+          priority: 'normal'
+        });
+        res.json({ result });
+      }
     } catch (error) {
       loggers.app.error('Failed to send test notification', { error });
       res.status(500).json({ error: 'Failed to send test notification' });
@@ -234,6 +254,42 @@ export function createAdminRouter(
       // Cache settings (24 hour TTL, but this is just for fast access)
       await dataStore.cache('shelly:settings', JSON.stringify(settings), 86400);
 
+      // Sync Temporal schedules (best-effort)
+      if (temporalClient) {
+        try {
+          const client = temporalClient.getClient();
+          const taskQueue = temporalClient.getTaskQueue();
+
+          // Sync daily report schedule
+          if (settings.dailyReportTime) {
+            const [hours, minutes] = settings.dailyReportTime.split(':');
+            const cron = `${minutes || '0'} ${hours || '9'} * * *`;
+            await upsertSchedule(client, 'daily-report-schedule', cron, 'dailyReportWorkflow', taskQueue, [{}]);
+          }
+
+          // Sync weekly report schedule
+          if (settings.weeklyReportDay) {
+            const dayMap: Record<string, number> = {
+              sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+              thursday: 4, friday: 5, saturday: 6,
+            };
+            const dayNum = dayMap[settings.weeklyReportDay.toLowerCase()] ?? 1;
+            const cron = `0 9 * * ${dayNum}`;
+            await upsertSchedule(client, 'weekly-report-schedule', cron, 'weeklyReportWorkflow', taskQueue, [{}]);
+          }
+
+          // Sync stale detection schedule
+          if (settings.defaultStalePRDays !== undefined) {
+            const cron = '0 10 * * *';
+            await upsertSchedule(client, 'stale-detection-schedule', cron, 'staleDetectionWorkflow', taskQueue, [{ staleDays: settings.defaultStalePRDays }]);
+          }
+
+          loggers.app.info('Synced Temporal schedules from settings');
+        } catch (syncError) {
+          loggers.app.warn('Failed to sync Temporal schedules (best-effort)', { error: syncError });
+        }
+      }
+
       loggers.app.info('Updated global settings');
       res.json({ success: true, settings });
     } catch (error) {
@@ -243,4 +299,44 @@ export function createAdminRouter(
   });
 
   return router;
+}
+
+/**
+ * Create or update a Temporal schedule.
+ */
+async function upsertSchedule(
+  client: ReturnType<TemporalClient['getClient']>,
+  scheduleId: string,
+  cron: string,
+  workflowType: string,
+  taskQueue: string,
+  args: unknown[]
+): Promise<void> {
+  const handle = client.schedule.getHandle(scheduleId);
+  try {
+    await handle.describe();
+    // Schedule exists — update it
+    await handle.update((prev) => ({
+      ...prev,
+      spec: { cronExpressions: [cron] },
+      action: {
+        type: 'startWorkflow' as const,
+        workflowType,
+        taskQueue,
+        args,
+      },
+    }));
+  } catch {
+    // Schedule doesn't exist — create it
+    await client.schedule.create({
+      scheduleId,
+      spec: { cronExpressions: [cron] },
+      action: {
+        type: 'startWorkflow' as const,
+        workflowType,
+        taskQueue,
+        args,
+      },
+    });
+  }
 }

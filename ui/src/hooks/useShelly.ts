@@ -143,6 +143,60 @@ export function useShelly() {
     [fetchApi]
   );
 
+  // Workflow endpoints
+  const getWorkflows = useCallback((limit?: number) =>
+    fetchApi<{ workflows: WorkflowExecution[] }>('/workflows', {
+      params: limit ? { limit: String(limit) } : undefined,
+    }),
+    [fetchApi]
+  );
+
+  const getWorkflowStatus = useCallback((workflowId: string) =>
+    fetchApi<WorkflowExecution>(`/workflows/${workflowId}`),
+    [fetchApi]
+  );
+
+  const getWorkflowResult = useCallback((workflowId: string) =>
+    fetchApi<{ workflowId: string; result: unknown }>(`/workflows/${workflowId}/result`),
+    [fetchApi]
+  );
+
+  const triggerDailyReport = useCallback((repos?: string[], date?: string) =>
+    fetchApi<WorkflowTriggerResult>('/workflows/trigger/daily-report', {
+      method: 'POST',
+      body: JSON.stringify({ repos, date }),
+    }),
+    [fetchApi]
+  );
+
+  const triggerWeeklyReport = useCallback((repos?: string[], weekStart?: string) =>
+    fetchApi<WorkflowTriggerResult>('/workflows/trigger/weekly-report', {
+      method: 'POST',
+      body: JSON.stringify({ repos, weekStart }),
+    }),
+    [fetchApi]
+  );
+
+  const triggerStaleDetection = useCallback((opts?: { repos?: string[]; staleDays?: number; notifyChannel?: string; notifyRecipient?: string }) =>
+    fetchApi<WorkflowTriggerResult>('/workflows/trigger/stale-detection', {
+      method: 'POST',
+      body: JSON.stringify(opts || {}),
+    }),
+    [fetchApi]
+  );
+
+  const getSchedules = useCallback(() =>
+    fetchApi<{ schedules: WorkflowSchedule[] }>('/workflows/schedules'),
+    [fetchApi]
+  );
+
+  const cancelWorkflow = useCallback((workflowId: string) =>
+    fetchApi<{ workflowId: string; status: string }>(`/workflows/${workflowId}/cancel`, {
+      method: 'POST',
+    }),
+    [fetchApi]
+  );
+
   return {
     loading,
     error,
@@ -161,6 +215,15 @@ export function useShelly() {
     testNotification,
     addProject,
     removeProject,
+    // Workflows
+    getWorkflows,
+    getWorkflowStatus,
+    getWorkflowResult,
+    triggerDailyReport,
+    triggerWeeklyReport,
+    triggerStaleDetection,
+    getSchedules,
+    cancelWorkflow,
   };
 }
 
@@ -263,4 +326,24 @@ export interface NotificationResult {
   recipient: string;
   messageId?: string;
   error?: string;
+}
+
+export interface WorkflowExecution {
+  workflowId: string;
+  runId: string;
+  type: string;
+  status: string;
+  startTime?: string;
+  closeTime?: string;
+  executionTime?: string;
+}
+
+export interface WorkflowTriggerResult {
+  workflowId: string;
+  runId: string;
+}
+
+export interface WorkflowSchedule {
+  scheduleId: string;
+  info: unknown;
 }

@@ -33,13 +33,13 @@ export function createApiRouter(deps: ApiDependencies): Router {
   const router = Router();
 
   // Mount dashboard routes
-  router.use('/', createDashboardRouter(deps.dataStore, deps.github));
+  router.use('/', createDashboardRouter(deps.dataStore, deps.github, deps.temporalClient));
 
   // Mount chat routes - uses Claude CLI instead of API
   router.use('/chat', createChatRouter(deps.dataStore, deps.github, deps.workspacePath));
 
   // Mount admin routes
-  router.use('/admin', createAdminRouter(deps.dataStore, deps.notificationService));
+  router.use('/admin', createAdminRouter(deps.dataStore, deps.notificationService, deps.temporalClient));
 
   // Mount sandbox routes
   router.use('/sandbox', createSandboxRouter(deps.dataStore, deps.sandboxService));
