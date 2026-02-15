@@ -11,6 +11,7 @@ import { ShellyDataStore } from '../data/store';
 import { ReportingService } from '../skills/reporting';
 import { NotificationService } from '../channels/notifications';
 import { TemporalClient } from '../temporal/client';
+import { SagaService } from '../saga/service';
 import { formatDate, parseDate } from '../utils/dates';
 import { v4 as uuid } from 'uuid';
 
@@ -588,6 +589,164 @@ export const tools: Tool[] = [
       },
       required: ['repo']
     }
+  },
+
+  // ==================== Saga Orchestrator ====================
+  {
+    name: 'start_saga',
+    description: 'Start a saga workflow in the saga-orchestrator. A saga automates PRD-driven development across multiple dimensions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        saga_id: {
+          type: 'string',
+          description: 'The saga codename/ID to start'
+        },
+        config: {
+          type: 'object',
+          description: 'Optional saga config (name, codename, repo_url, base_branch, dimensions)',
+          properties: {
+            name: { type: 'string' },
+            codename: { type: 'string' },
+            repo_url: { type: 'string' },
+            base_branch: { type: 'string' },
+            slack_channel: { type: 'string' },
+            dimensions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  name: { type: 'string' },
+                  type: { type: 'string' },
+                  requires: { type: 'array', items: { type: 'string' } }
+                },
+                required: ['id', 'name', 'type']
+              }
+            }
+          }
+        }
+      },
+      required: ['saga_id']
+    }
+  },
+  {
+    name: 'get_saga_status',
+    description: 'Get the current status and progress of a saga workflow, including dimension counts and review flags',
+    input_schema: {
+      type: 'object',
+      properties: {
+        saga_id: {
+          type: 'string',
+          description: 'The saga codename/ID'
+        }
+      },
+      required: ['saga_id']
+    }
+  },
+  {
+    name: 'list_sagas',
+    description: 'List all sagas known to the saga-orchestrator with their status summaries',
+    input_schema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_saga_dimensions',
+    description: 'Get the list of dimensions for a saga with their individual statuses and adventure counts',
+    input_schema: {
+      type: 'object',
+      properties: {
+        saga_id: {
+          type: 'string',
+          description: 'The saga codename/ID'
+        }
+      },
+      required: ['saga_id']
+    }
+  },
+  {
+    name: 'send_saga_signal',
+    description: 'Send a human decision signal to a saga or dimension workflow (e.g., retry collapsed dimensions, skip failed adventures)',
+    input_schema: {
+      type: 'object',
+      properties: {
+        saga_id: {
+          type: 'string',
+          description: 'The saga codename/ID'
+        },
+        signal_type: {
+          type: 'string',
+          enum: ['retry_dimension', 'skip_dimension', 'interrupt_response'],
+          description: 'Type of signal to send'
+        },
+        decision: {
+          type: 'string',
+          description: 'The decision value (e.g., "retry_all", "skip_failed", "abort_dimension")'
+        },
+        dimension_id: {
+          type: 'string',
+          description: 'Target dimension ID (for dimension-level signals)'
+        }
+      },
+      required: ['saga_id', 'signal_type', 'decision']
+    }
+  },
+  {
+    name: 'compose_saga_config',
+    description: 'Generate a saga YAML configuration from structured input (repo, name, dimensions). Use this to prepare a saga before starting it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'Repository URL (e.g., "https://github.com/owner/repo")'
+        },
+        name: {
+          type: 'string',
+          description: 'Human-readable saga name (e.g., "Q1 Platform Rebuild")'
+        },
+        codename: {
+          type: 'string',
+          description: 'Short saga codename (e.g., "operation-cronenberg")'
+        },
+        base_branch: {
+          type: 'string',
+          description: 'Base branch (default: "main")'
+        },
+        slack_channel: {
+          type: 'string',
+          description: 'Slack channel for notifications'
+        },
+        dimensions: {
+          type: 'array',
+          description: 'List of dimensions (work streams) for the saga',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Dimension ID' },
+              name: { type: 'string', description: 'Dimension name' },
+              type: { type: 'string', description: 'Dimension type (e.g., fascist, froopyland, cronenberg)' },
+              requires: { type: 'array', items: { type: 'string' }, description: 'IDs of dimensions this depends on' },
+              adventures: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    prompt: { type: 'string' }
+                  },
+                  required: ['name', 'prompt']
+                }
+              }
+            },
+            required: ['id', 'name', 'type']
+          }
+        }
+      },
+      required: ['repo', 'name', 'codename', 'dimensions']
+    }
   }
 ];
 
@@ -600,6 +759,7 @@ export interface ToolHandlerDependencies {
   reporting?: ReportingService;
   notifications?: NotificationService;
   temporalClient?: TemporalClient;
+  sagaService?: SagaService;
 }
 
 /**
@@ -608,11 +768,12 @@ export interface ToolHandlerDependencies {
 export function createToolHandlers(
   github: GitHubClient,
   dataStore: ShellyDataStore,
-  deps?: { reporting?: ReportingService; notifications?: NotificationService; temporalClient?: TemporalClient }
+  deps?: { reporting?: ReportingService; notifications?: NotificationService; temporalClient?: TemporalClient; sagaService?: SagaService }
 ): Record<string, (input: unknown) => Promise<unknown>> {
   const reporting = deps?.reporting || new ReportingService({ github, dataStore });
   const notifications = deps?.notifications || new NotificationService();
   const temporalClient = deps?.temporalClient;
+  const sagaService = deps?.sagaService;
 
   // Configure GitHub comment channel
   const githubCommentChannel = notifications.getChannel('github_comment');
@@ -1068,6 +1229,138 @@ export function createToolHandlers(
         details: a.action_details,
         timestamp: a.created_at
       }));
+    },
+
+    // ==================== Saga Orchestrator ====================
+    start_saga: async (input: unknown) => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      const { saga_id, config } = input as { saga_id: string; config?: Record<string, unknown> };
+      try {
+        const result = await sagaService.startSaga(saga_id, config as any);
+        await dataStore.logActivity(null, 'saga_started', saga_id, { status: result.status });
+        return result;
+      } catch (err) {
+        return { error: `Failed to start saga: ${(err as Error).message}` };
+      }
+    },
+
+    get_saga_status: async (input: unknown) => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      const { saga_id } = input as { saga_id: string };
+      try {
+        const detail = await sagaService.getSagaStatus(saga_id);
+        return {
+          saga_id,
+          status: detail.status,
+          total_dimensions: detail.total_dimensions,
+          completed_dimensions: detail.completed_dimensions,
+          collapsed_dimensions: detail.collapsed_dimensions,
+          running_dimensions: detail.running_dimensions,
+          pending_dimensions: detail.pending_dimensions,
+          needs_human_review: detail.needs_human_review,
+          pending_interrupt: detail.pending_interrupt,
+        };
+      } catch (err) {
+        return { error: `Failed to get saga status: ${(err as Error).message}` };
+      }
+    },
+
+    list_sagas: async () => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      try {
+        const sagas = await sagaService.listSagas();
+        return sagas.map(s => ({
+          codename: s.codename,
+          name: s.name,
+          status: s.status,
+          total_dimensions: s.total_dimensions,
+          completed_dimensions: s.completed_dimensions,
+          collapsed_dimensions: s.collapsed_dimensions,
+        }));
+      } catch (err) {
+        return { error: `Failed to list sagas: ${(err as Error).message}` };
+      }
+    },
+
+    get_saga_dimensions: async (input: unknown) => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      const { saga_id } = input as { saga_id: string };
+      try {
+        const dimensions = await sagaService.getSagaDimensions(saga_id);
+        return dimensions.map(d => ({
+          id: d.id,
+          name: d.name,
+          type: d.type,
+          status: d.status,
+          total_adventures: d.total_adventures,
+          completed_adventures: d.completed_adventures,
+          failed_adventures: d.failed_adventures,
+          requires: d.requires,
+        }));
+      } catch (err) {
+        return { error: `Failed to get dimensions: ${(err as Error).message}` };
+      }
+    },
+
+    send_saga_signal: async (input: unknown) => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      const { saga_id, signal_type, decision, dimension_id } = input as {
+        saga_id: string;
+        signal_type: string;
+        decision: string;
+        dimension_id?: string;
+      };
+      try {
+        const data = dimension_id ? { dimension_id } : undefined;
+        const result = await sagaService.sendSignal(saga_id, signal_type, decision, data);
+        await dataStore.logActivity(null, 'saga_signal_sent', saga_id, {
+          signal_type,
+          decision,
+          dimension_id,
+        });
+        return result;
+      } catch (err) {
+        return { error: `Failed to send signal: ${(err as Error).message}` };
+      }
+    },
+
+    compose_saga_config: async (input: unknown) => {
+      if (!sagaService) {
+        return { error: 'Saga orchestrator service is not configured' };
+      }
+      const { repo, name, codename, base_branch, slack_channel, dimensions } = input as {
+        repo: string;
+        name: string;
+        codename: string;
+        base_branch?: string;
+        slack_channel?: string;
+        dimensions: Array<{
+          id: string;
+          name: string;
+          type: string;
+          requires?: string[];
+          adventures?: Array<{ name: string; prompt: string }>;
+        }>;
+      };
+      const yaml = sagaService.composeSagaConfig({
+        repo,
+        name,
+        codename,
+        baseBranch: base_branch,
+        slackChannel: slack_channel,
+        dimensions,
+      });
+      return { yaml_content: yaml };
     }
   };
 }

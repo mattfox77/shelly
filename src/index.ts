@@ -15,6 +15,7 @@ import { SandboxService } from './sandbox';
 import { ReportingService } from './skills/reporting';
 import { createApiRouter } from './api';
 import { TemporalClient, startWorker } from './temporal';
+import { SagaService } from './saga';
 import type { Worker } from '@temporalio/worker';
 
 // Configuration
@@ -40,6 +41,9 @@ const config = {
   },
   temporal: {
     address: process.env.TEMPORAL_ADDRESS || 'localhost:7233'
+  },
+  saga: {
+    baseUrl: process.env.SAGA_ORCHESTRATOR_URL || 'http://localhost:8002'
   },
   workspace: {
     path: path.join(__dirname, '..', 'workspace')
@@ -95,6 +99,25 @@ async function main(): Promise<void> {
   const sandboxAvailable = await sandboxService.isAvailable();
   loggers.app.info('Sandbox service initialized', { available: sandboxAvailable });
 
+  // Initialize saga-orchestrator client (optional — graceful fallback if unavailable)
+  let sagaService: SagaService | undefined;
+  try {
+    sagaService = new SagaService(config.saga.baseUrl);
+    const sagaHealthy = await sagaService.isHealthy();
+    loggers.app.info('Saga orchestrator client initialized', {
+      baseUrl: config.saga.baseUrl,
+      healthy: sagaHealthy,
+    });
+    if (!sagaHealthy) {
+      loggers.app.warn('Saga orchestrator not reachable — saga features will use lazy connection');
+    }
+  } catch (error) {
+    loggers.app.warn('Saga orchestrator unavailable — running without saga support', {
+      error: (error as Error).message,
+    });
+    sagaService = undefined;
+  }
+
   // Initialize Temporal (optional — graceful fallback if unavailable)
   let temporalClient: TemporalClient | undefined;
   let temporalWorker: Worker | undefined;
@@ -105,7 +128,7 @@ async function main(): Promise<void> {
 
     const reportingService = new ReportingService({ github, dataStore });
     temporalWorker = await startWorker(
-      { reportingService, dataStore, github, notificationService },
+      { reportingService, dataStore, github, notificationService, sagaService },
       { address: config.temporal.address }
     );
     loggers.app.info('Temporal worker started');
@@ -125,10 +148,11 @@ async function main(): Promise<void> {
     notificationService,
     sandboxService,
     temporalClient,
+    sagaService,
   });
 
   // Start health check server
-  const healthServer = new ShellyHealthServer({ dataStore, temporalClient });
+  const healthServer = new ShellyHealthServer({ dataStore, temporalClient, sagaService });
 
   // Mount API routes
   healthServer.use('/api', apiRouter);
@@ -164,8 +188,9 @@ async function main(): Promise<void> {
 class ShellyHealthServer extends BaseHealthServer {
   private dataStore: ShellyDataStore;
   private temporalClient?: TemporalClient;
+  private sagaService?: SagaService;
 
-  constructor(deps: { dataStore: ShellyDataStore; temporalClient?: TemporalClient }) {
+  constructor(deps: { dataStore: ShellyDataStore; temporalClient?: TemporalClient; sagaService?: SagaService }) {
     super({
       port: 8081,
       enableMetrics: true,
@@ -174,6 +199,7 @@ class ShellyHealthServer extends BaseHealthServer {
     });
     this.dataStore = deps.dataStore;
     this.temporalClient = deps.temporalClient;
+    this.sagaService = deps.sagaService;
   }
 
   protected async checkDependencies(): Promise<Record<string, { name: string; status: 'up' | 'down'; message?: string; responseTime?: number }>> {
@@ -233,6 +259,26 @@ class ShellyHealthServer extends BaseHealthServer {
       }
     }
 
+    // Check saga-orchestrator
+    if (this.sagaService) {
+      try {
+        const start = Date.now();
+        const healthy = await this.sagaService.isHealthy();
+        checks.sagaOrchestrator = {
+          name: 'saga-orchestrator',
+          status: healthy ? 'up' : 'down',
+          responseTime: Date.now() - start,
+          message: healthy ? undefined : 'Health check failed'
+        };
+      } catch (error) {
+        checks.sagaOrchestrator = {
+          name: 'saga-orchestrator',
+          status: 'down',
+          message: (error as Error).message
+        };
+      }
+    }
+
     return checks;
   }
 }
@@ -249,3 +295,4 @@ export { createApiRouter } from './api';
 export { SandboxService } from './sandbox';
 export { NotificationService } from './channels/notifications';
 export { TemporalClient } from './temporal';
+export { SagaService } from './saga';

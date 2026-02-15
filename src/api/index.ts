@@ -15,7 +15,9 @@ import { createChatRouter } from './routes/chat';
 import { createAdminRouter } from './routes/admin';
 import { createSandboxRouter } from './routes/sandbox';
 import { createWorkflowRouter } from './routes/workflows';
+import { createSagaRouter } from './routes/saga';
 import { TemporalClient } from '../temporal/client';
+import { SagaService } from '../saga/service';
 
 export interface ApiDependencies {
   dataStore: ShellyDataStore;
@@ -24,6 +26,7 @@ export interface ApiDependencies {
   notificationService: NotificationService;
   sandboxService: SandboxService;
   temporalClient?: TemporalClient;
+  sagaService?: SagaService;
 }
 
 /**
@@ -47,6 +50,11 @@ export function createApiRouter(deps: ApiDependencies): Router {
   // Mount workflow routes (only if Temporal is available)
   if (deps.temporalClient) {
     router.use('/workflows', createWorkflowRouter(deps.temporalClient, deps.dataStore));
+  }
+
+  // Mount saga routes (only if SagaService is available)
+  if (deps.sagaService) {
+    router.use('/saga', createSagaRouter(deps.sagaService, deps.dataStore, deps.temporalClient));
   }
 
   // API info endpoint
@@ -105,6 +113,16 @@ export function createApiRouter(deps: ApiDependencies): Router {
           'GET /api/workflows/schedules': 'List all schedules',
           'DELETE /api/workflows/schedules/:scheduleId': 'Delete a schedule',
           'POST /api/workflows/:workflowId/cancel': 'Cancel running workflow'
+        },
+        saga: {
+          'POST /api/saga/start': 'Start saga with Shelly oversight',
+          'GET /api/saga/status/:sagaId': 'Get saga status',
+          'GET /api/saga/list': 'List all sagas',
+          'POST /api/saga/signal/:sagaId': 'Send signal to saga workflow',
+          'GET /api/saga/events/:sagaId': 'SSE stream of saga events',
+          'GET /api/saga/dimensions/:sagaId': 'Get saga dimensions',
+          'GET /api/saga/oversight': 'List saga oversight records',
+          'GET /api/saga/oversight/:sagaId': 'Get specific oversight record'
         }
       }
     });
@@ -119,3 +137,4 @@ export { createChatRouter } from './routes/chat';
 export { createAdminRouter } from './routes/admin';
 export { createSandboxRouter } from './routes/sandbox';
 export { createWorkflowRouter } from './routes/workflows';
+export { createSagaRouter } from './routes/saga';

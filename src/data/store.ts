@@ -108,6 +108,22 @@ export interface WeeklyReport {
   created_at: Date;
 }
 
+export interface SagaOversightRecord {
+  id: number;
+  saga_id: string;
+  status: string;
+  started_at: Date;
+  completed_at?: Date;
+  decisions_made: Array<{ decision: string; reasoning: string; timestamp: string }>;
+  summary?: string;
+  total_dimensions: number;
+  completed_dimensions: number;
+  collapsed_dimensions: number;
+  duration_ms?: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export class ShellyDataStore {
   private pool!: Pool;
   private redis!: RedisClientType;
@@ -436,5 +452,91 @@ export class ShellyDataStore {
       action_details: Record<string, unknown>;
       created_at: Date;
     }>;
+  }
+
+  // ==================== Saga Oversight ====================
+
+  async saveSagaOversight(record: {
+    sagaId: string;
+    status: string;
+    decisionsMade?: Array<{ decision: string; reasoning: string; timestamp: string }>;
+    summary?: string;
+    totalDimensions?: number;
+    completedDimensions?: number;
+    collapsedDimensions?: number;
+    durationMs?: number;
+  }): Promise<SagaOversightRecord> {
+    const isTerminal = ['complete', 'failed', 'collapsed', 'partial'].includes(record.status);
+
+    if (isTerminal) {
+      // Update the most recent running record for this saga
+      const result = await this.query<SagaOversightRecord>(
+        `UPDATE saga_oversight SET
+           status = $2,
+           decisions_made = $3,
+           summary = $4,
+           total_dimensions = $5,
+           completed_dimensions = $6,
+           collapsed_dimensions = $7,
+           duration_ms = $8,
+           completed_at = NOW()
+         WHERE id = (
+           SELECT id FROM saga_oversight
+           WHERE saga_id = $1 AND status = 'running'
+           ORDER BY created_at DESC LIMIT 1
+         )
+         RETURNING *`,
+        [
+          record.sagaId,
+          record.status,
+          JSON.stringify(record.decisionsMade ?? []),
+          record.summary ?? null,
+          record.totalDimensions ?? 0,
+          record.completedDimensions ?? 0,
+          record.collapsedDimensions ?? 0,
+          record.durationMs ?? null,
+        ]
+      );
+
+      // Fallback to INSERT if no running record found (e.g. direct completion)
+      if (result.rows.length > 0) return result.rows[0];
+    }
+
+    // INSERT a new record (for 'running' status or fallback)
+    const result = await this.query<SagaOversightRecord>(
+      `INSERT INTO saga_oversight
+       (saga_id, status, decisions_made, summary, total_dimensions, completed_dimensions, collapsed_dimensions, duration_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        record.sagaId,
+        record.status,
+        JSON.stringify(record.decisionsMade ?? []),
+        record.summary ?? null,
+        record.totalDimensions ?? 0,
+        record.completedDimensions ?? 0,
+        record.collapsedDimensions ?? 0,
+        record.durationMs ?? null,
+      ]
+    );
+    return result.rows[0];
+  }
+
+  async getSagaOversight(sagaId: string): Promise<SagaOversightRecord | null> {
+    const result = await this.query<SagaOversightRecord>(
+      'SELECT * FROM saga_oversight WHERE saga_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [sagaId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async listSagaOversight(limit: number = 50): Promise<SagaOversightRecord[]> {
+    const result = await this.query<SagaOversightRecord>(
+      `SELECT * FROM saga_oversight
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows;
   }
 }

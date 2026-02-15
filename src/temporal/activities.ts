@@ -6,9 +6,11 @@
  */
 
 import { ReportingService, DailyReportData, WeeklyReportData } from '../skills/reporting';
-import { ShellyDataStore, Project } from '../data/store';
+import { ShellyDataStore, Project, SagaOversightRecord } from '../data/store';
 import { GitHubClient, Issue, PullRequest } from '../github/client';
 import { NotificationService, NotificationResult } from '../channels/notifications';
+import { SagaService } from '../saga/service';
+import type { SagaDetail, SagaSummary, SagaDimension, StartSagaResponse, SignalResponse, SagaConfig } from '../saga/types';
 import { loggers } from 'the-machina';
 
 export interface ActivityDependencies {
@@ -16,6 +18,7 @@ export interface ActivityDependencies {
   dataStore: ShellyDataStore;
   github: GitHubClient;
   notificationService: NotificationService;
+  sagaService?: SagaService;
 }
 
 export interface RepoStats {
@@ -197,6 +200,100 @@ export function createActivities(deps: ActivityDependencies) {
     ): Promise<void> {
       loggers.app.info('Activity: logging workflow activity', { actionType, actionTarget });
       await dataStore.logActivity(projectId, actionType, actionTarget, details);
+    },
+
+    // ==================== Saga Orchestrator ====================
+
+    async startSagaActivity(
+      sagaId: string,
+      config?: SagaConfig
+    ): Promise<StartSagaResponse> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: starting saga', { sagaId });
+      return deps.sagaService.startSaga(sagaId, config);
+    },
+
+    async getSagaStatusActivity(
+      sagaId: string
+    ): Promise<SagaDetail> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: getting saga status', { sagaId });
+      return deps.sagaService.getSagaStatus(sagaId);
+    },
+
+    async listSagasActivity(): Promise<SagaSummary[]> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: listing sagas');
+      return deps.sagaService.listSagas();
+    },
+
+    async getSagaDimensionsActivity(
+      sagaId: string
+    ): Promise<SagaDimension[]> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: getting saga dimensions', { sagaId });
+      return deps.sagaService.getSagaDimensions(sagaId);
+    },
+
+    async sendSagaSignalActivity(
+      sagaId: string,
+      signalType: string,
+      decision: string,
+      data?: Record<string, unknown>
+    ): Promise<SignalResponse> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: sending saga signal', { sagaId, signalType, decision });
+      return deps.sagaService.sendSignal(sagaId, signalType, decision, data);
+    },
+
+    async handleSagaReviewActivity(
+      sagaId: string,
+      context: {
+        totalDimensions: number;
+        completedDimensions: number;
+        collapsedDimensions: number;
+        pendingInterrupt: unknown;
+        attemptNumber: number;
+      }
+    ): Promise<{ decision: string; reasoning: string }> {
+      if (!deps.sagaService) throw new Error('SagaService not configured');
+      loggers.app.info('Activity: handling saga review', { sagaId, attempt: context.attemptNumber });
+
+      // Conservative strategy: retry on first attempt, skip on subsequent
+      if (context.attemptNumber <= 1) {
+        return {
+          decision: 'retry_collapsed',
+          reasoning: `First review attempt for saga ${sagaId}: retrying ${context.collapsedDimensions} collapsed dimension(s) before giving up.`,
+        };
+      }
+
+      return {
+        decision: 'skip_and_unblock',
+        reasoning: `Review attempt ${context.attemptNumber} for saga ${sagaId}: ${context.collapsedDimensions} dimension(s) still collapsed after retry. Skipping to unblock remaining work.`,
+      };
+    },
+
+    async saveSagaOversightRecord(
+      sagaId: string,
+      status: string,
+      decisions: Array<{ decision: string; reasoning: string; timestamp: string }>,
+      summary: string,
+      totalDimensions?: number,
+      completedDimensions?: number,
+      collapsedDimensions?: number,
+      durationMs?: number
+    ): Promise<SagaOversightRecord> {
+      loggers.app.info('Activity: saving saga oversight record', { sagaId, status });
+      return dataStore.saveSagaOversight({
+        sagaId,
+        status,
+        decisionsMade: decisions,
+        summary,
+        totalDimensions,
+        completedDimensions,
+        collapsedDimensions,
+        durationMs,
+      });
     },
   };
 }
