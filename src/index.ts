@@ -40,7 +40,8 @@ const config = {
     url: process.env.SANDBOX_AGENT_URL || 'http://localhost:2468'
   },
   temporal: {
-    address: process.env.TEMPORAL_ADDRESS || 'localhost:7233'
+    address: process.env.TEMPORAL_ADDRESS || 'localhost:7233',
+    namespace: process.env.TEMPORAL_NAMESPACE || 'default'
   },
   saga: {
     baseUrl: process.env.SAGA_ORCHESTRATOR_URL || 'http://localhost:8002'
@@ -122,14 +123,14 @@ async function main(): Promise<void> {
   let temporalClient: TemporalClient | undefined;
   let temporalWorker: Worker | undefined;
   try {
-    temporalClient = new TemporalClient(config.temporal.address);
+    temporalClient = new TemporalClient(config.temporal.address, config.temporal.namespace);
     await temporalClient.connect();
     loggers.app.info('Temporal client connected');
 
     const reportingService = new ReportingService({ github, dataStore });
     temporalWorker = await startWorker(
       { reportingService, dataStore, github, notificationService, sagaService },
-      { address: config.temporal.address }
+      { address: config.temporal.address, namespace: config.temporal.namespace }
     );
     loggers.app.info('Temporal worker started');
   } catch (error) {

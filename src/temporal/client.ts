@@ -14,15 +14,17 @@ export class TemporalClient {
   private connection: Connection | null = null;
   private client: Client | null = null;
   private address: string;
+  private namespace: string;
 
-  constructor(address: string = 'localhost:7233') {
+  constructor(address: string = 'localhost:7233', namespace: string = 'default') {
     this.address = address;
+    this.namespace = namespace;
   }
 
   async connect(): Promise<void> {
     this.connection = await Connection.connect({ address: this.address });
-    this.client = new Client({ connection: this.connection });
-    loggers.app.info('Temporal client connected', { address: this.address });
+    this.client = new Client({ connection: this.connection, namespace: this.namespace });
+    loggers.app.info('Temporal client connected', { address: this.address, namespace: this.namespace });
   }
 
   getClient(): Client {

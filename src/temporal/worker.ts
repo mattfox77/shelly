@@ -14,6 +14,7 @@ const TASK_QUEUE = 'shelly-workflows';
 export interface WorkerConfig {
   address?: string;
   taskQueue?: string;
+  namespace?: string;
 }
 
 /**
@@ -27,18 +28,20 @@ export async function startWorker(
 ): Promise<Worker> {
   const address = config.address || 'localhost:7233';
   const taskQueue = config.taskQueue || TASK_QUEUE;
+  const namespace = config.namespace || 'default';
 
   const connection = await NativeConnection.connect({ address });
   const activities = createActivities(deps);
 
   const worker = await Worker.create({
     connection,
+    namespace,
     taskQueue,
     workflowsPath: require.resolve('./workflows'),
     activities,
   });
 
-  loggers.app.info('Temporal worker started', { taskQueue, address });
+  loggers.app.info('Temporal worker started', { taskQueue, address, namespace });
 
   // Run in background — the returned promise resolves when the worker shuts down
   worker.run().catch(err => {
